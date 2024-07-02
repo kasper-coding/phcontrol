@@ -7,10 +7,10 @@
 #include <WebServer.h>
 
 // Your existing variables and setup
-float calibph7 = 2.58; //spannung bei ph7 
+float calibph7 = 2.64; //spannung bei ph7 bzw 6.86
 float calibph4 = 3.30; // spannung bei ph4 
-float calibph7_ph = 6.97 ; //PH wert für spannung PH7
-float calibph4_ph = 4.01 ; //PH Wert für Spannung PH4
+float calibph7_ph = 6.97 ;
+float calibph4_ph = 4.01 ;
 float m;
 float b;
 float phValue;
@@ -20,10 +20,13 @@ float minph = 6.8;
 boolean wifi = false;
 boolean mqtt = false;
 
-SimpleTimer timer;
+///SimpleTimer timer(5000);
+float calibration_value = 24.00;
 int phval = 0; 
 unsigned long int avgval; 
-int buffer_arr[10], temp;
+int buffer_arr[100], temp;
+
+float ph_act; 
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 32
@@ -32,11 +35,11 @@ int buffer_arr[10], temp;
 #define RELAY_PIN_MIN 17
 
 // WiFi credentials
-const char* ssid = "<addyour settings>";
-const char* password = "<add your settings>";
+const char* ssid = "<your_ssid>";
+const char* password = "<your pwd>";
 
 // MQTT Server
-const char* mqtt_server = "your mqtt server";
+const char* mqtt_server = "yourmqttserver";
 const int mqtt_port = 1883;
 
 WiFiClient espClient;
@@ -59,6 +62,7 @@ void setup() {
   display.setTextColor(WHITE); 
   display_pHValue();
 
+
   m = (calibph4_ph - calibph7_ph) / (calibph4 - calibph7);
   b = calibph7_ph - m * calibph7;
 
@@ -72,17 +76,13 @@ void setup() {
   server.begin();
 }
 
-//read 10 analog value write to buffer and calculate average over the values
-// todo read more values to eliminate oscillation
-
 void loop() {
-  timer.setInterval(500);
-  for(int i = 0; i < 10; i++) { 
+    for(int i = 0; i < 100; i++) { 
     buffer_arr[i] = analogRead(32);
     delay(30);
   }
-  for(int i = 0; i < 9; i++) {
-    for(int j = i + 1; j < 10; j++) {
+  for(int i = 0; i < 99; i++) {
+    for(int j = i + 1; j < 100; j++) {
       if(buffer_arr[i] > buffer_arr[j]) {
         temp = buffer_arr[i];
         buffer_arr[i] = buffer_arr[j];
@@ -91,15 +91,18 @@ void loop() {
     }
   }
   avgval = 0;
-  for(int i = 2; i < 8; i++)
+  for(int i = 40; i < 60; i++)
     avgval += buffer_arr[i];
  
-  Voltage = (float)avgval * 3.3 / 4096.0 / 6; // Averagevalue is devided by supplied voltage 3.3V devided by ADC resolution 4096bit and devided by number of samples read 6 for avgvalue
+  Voltage = (float)avgval * 3.3 / 4096.0 / 20; // Averagevalue is devided by supplied voltage 3.3V devided by ADC resolution 4096bit and devided by number of samples read 6 for avgvalue
   Serial.print("*******Voltage: ");
   Serial.println(Voltage);
   phValue = m * Voltage + b;
   Serial.print("*******pH Val: ");
-  Serial.println(phValue);
+  Serial.println(phValue);  
+
+
+
   checkPH(phValue);
  
   display_pHValue();
@@ -109,8 +112,8 @@ void loop() {
   }
   client.loop();
   server.handleClient();
-  delay(5000);
 }
+
 
 void display_pHValue() {
   display.clearDisplay();
@@ -222,8 +225,6 @@ void reconnectMQTT() {
   }
 }
 
-//this checks if ph is above or below threshold and triggers relays
-// further this pushes current ph value to mqtt topic
 void checkPH(float phValue) {
   String phvalueStr = String(phValue);
   String status;
