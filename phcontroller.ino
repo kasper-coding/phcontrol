@@ -21,7 +21,6 @@ boolean wifi = false;
 boolean mqtt = false;
 
 ///SimpleTimer timer(5000);
-float calibration_value = 24.00;
 int phval = 0; 
 unsigned long int avgval; 
 int buffer_arr[100], temp;
@@ -35,8 +34,8 @@ float ph_act;
 #define RELAY_PIN_MIN 17
 
 // WiFi credentials
-const char* ssid = "<your_ssid>";
-const char* password = "<your pwd>";
+const char* ssid = "<yourSSID>";
+const char* password = "<yourpass>";
 
 // MQTT Server
 const char* mqtt_server = "yourmqttserver";
@@ -49,6 +48,12 @@ WebServer server(80);
 // OLED display setup
 #define OLED_RESET -1
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// Sliding window buffer for 180 values
+#define BUFFER_SIZE 180
+float phBuffer[BUFFER_SIZE];
+int bufferIndex = 0;
+bool bufferFull = false;
 
 void setup() {
   Wire.begin();
@@ -101,9 +106,10 @@ void loop() {
   Serial.print("*******pH Val: ");
   Serial.println(phValue);  
 
+  updatePHBuffer(phValue);
+  float avgPH = calculateAveragePH();
 
-
-  checkPH(phValue);
+  checkPH(avgPH);
  
   display_pHValue();
 
@@ -114,8 +120,28 @@ void loop() {
   server.handleClient();
 }
 
+void updatePHBuffer(float newValue) {
+  phBuffer[bufferIndex] = newValue;
+  bufferIndex = (bufferIndex + 1) % BUFFER_SIZE;
+  if (bufferIndex == 0) {
+    bufferFull = true;
+  }
+  String phvalueStr = String(newValue);   // Use avgPH for the string
+  String status;
+  client.publish("/garten/pool/ph/currentph", phvalueStr.c_str());
+}
+
+float calculateAveragePH() {
+  int count = bufferFull ? BUFFER_SIZE : bufferIndex;
+  float sum = 0;
+  for (int i = 0; i < count; i++) {
+    sum += phBuffer[i];
+  }
+  return count > 0 ? sum / count : 0;
+}
 
 void display_pHValue() {
+  float avgPH = calculateAveragePH();
   display.clearDisplay();
   display.setTextSize(1);
   display.setCursor(0, 0);
@@ -136,25 +162,32 @@ void display_pHValue() {
   display.setCursor(72, 25);
   display.print(minph);
 
+  display.setTextSize(1);
+  display.setCursor(100, 0);
+  display.print("AVG");
+  display.setCursor(100, 8);
+  display.print(avgPH);
+  
+
   if(wifi) {
-    display.setCursor(100, 5);
+    display.setCursor(100, 19);
     display.print("WIFI");
   } else {
-    display.setCursor(100, 5);
+    display.setCursor(100, 19);
     display.print("-IF-");
   }
 
   if(mqtt) {
-    display.setCursor(100, 21);
+    display.setCursor(100, 27);
     display.print("MQTT");
   } else {
-    display.setCursor(100, 21);
+    display.setCursor(100, 27);
     display.print("-QT-");
   }
 
-  if (phValue > maxph) {
+  if (avgPH > maxph) {
     drawArrowDown();
-  } else if (phValue < minph) {
+  } else if (avgPH < minph) {
     drawArrowUp();
   } else {
     drawCircle();
@@ -225,15 +258,15 @@ void reconnectMQTT() {
   }
 }
 
-void checkPH(float phValue) {
-  String phvalueStr = String(phValue);
+void checkPH(float avgPH) {
+  String phvalueStr = String(avgPH);   // Use avgPH for the string
   String status;
   client.publish("/garten/pool/ph/phvalue", phvalueStr.c_str());
-  if (phValue > maxph) {
+  if (avgPH > maxph) {  // Use avgPH instead of phValue
     digitalWrite(RELAY_PIN_MAX, HIGH);
     digitalWrite(RELAY_PIN_MIN, LOW);
     status = "PH High";
-  } else if (phValue < minph) {
+  } else if (avgPH < minph) {  // Use avgPH instead of phValue
     digitalWrite(RELAY_PIN_MIN, HIGH);
     digitalWrite(RELAY_PIN_MAX, LOW);
     status = "PH Low";
@@ -258,6 +291,7 @@ void drawArrowDown() {
 }
 
 void handleRoot() {
+  float avgPH = calculateAveragePH();
   String html = "<html>\
   <head>\
   <title>pH Monitor</title>\
@@ -266,6 +300,7 @@ void handleRoot() {
   <h1>pH Monitor</h1>\
   <p>Current pH Value: " + String(phValue) + "</p>\
   <p>Current Voltage: " + String(Voltage) + " V</p>\
+  <p>Average pH Value: " + String(avgPH) + "</p>\
   <p>Max pH: " + String(maxph) + "</p>\
   <p>Min pH: " + String(minph) + "</p>\
   <p>Calibration pH 7 Voltage: " + String(calibph7) + "</p>\
